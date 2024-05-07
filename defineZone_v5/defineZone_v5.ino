@@ -32,45 +32,83 @@ VectorFloat gravity;    // [x, y, z]            gravity vector
 float euler[3];         // [psi, theta, phi]    Euler angle container
 float ypr[3];           // [yaw, pitch, roll]   yaw/pitch/roll container and gravity vector
 
-//Inputs and Outputs
-const int WORK_LED = 2; // Pin für die WORK LED
-const int BRAKE_LED = 3; // Pin für die BRAKE LED
-const int SETTING_LED = 4; // Pin für die Settings LED
-const int RESET_BUTTON = 5; // Pin für den Reset-Taster
-const int SET_BUTTON = 6; // Pin für den Set-Taster
+// LED pin for indicating work status
+const int WORK_LED = 2; 
 
-double ALPHA = 0.75; // Gewichtungsfaktor für den Komplementärfilter
-double accAngleX, accAngleY; // Beschleunigungsmesser-Winkel
-double gyroAngleX, gyroAngleY, gyroAngleZ; // Gyroskop-Winkel
-double roll, pitch, rollZero, pitchZero, yaw, yawZero; // Roll- und Pitch-Winkel
+// LED pin for indicating brake status
+const int BRAKE_LED = 3; 
+
+// LED pin for indicating setting status
+const int SETTING_LED = 4; 
+
+// Button pin for resetting the system
+const int RESET_BUTTON = 5; 
+
+// Button pin for setting the system
+const int SET_BUTTON = 6; 
+
+// Alpha value for complementary filter
+double ALPHA = 0.75; 
+
+// Accelerometer angles in X and Y directions
+double accAngleX, accAngleY; 
+
+// Gyroscope angles in X, Y and Z directions
+double gyroAngleX, gyroAngleY, gyroAngleZ; 
+
+// Roll, pitch and yaw angles and their zero values
+double roll, pitch, rollZero, pitchZero, yaw, yawZero;
+
+// Combined value of roll, pitch and yaw
 double combined;
+
+// Reset value for yaw angle
 double yawReset=0;
 
 const double  offsetPitch=0; //not calculated data
 const double  offsetRoll=0;    //not calculated data 
 const double  offsetYaw=0;     //not calculated data
 
+// Preset maximum and minimum values for pitch, roll, and yaw
 const double PRESET_PITCH_MAX=80;
 const double PRESET_PITCH_MIN=-80;
 const double PRESET_ROLL_MAX=80;
 const double PRESET_ROLL_MIN=-80;
 const double PRESET_YAW_MAX=80;
 const double PRESET_YAW_MIN=-80;
+
+// Preset maximum combined value
 const double PRESET_COMBINED_MAX=85;
 
-
+// Final values for pitch, roll, and yaw after calculations
 double pitch_final, roll_final, yaw_final;
+
+// Maximum and minimum values for pitch, roll, and yaw after adjustments
 double PITCH_MAX, ROLL_MAX, YAW_MAX;
 double PITCH_MIN, ROLL_MIN, YAW_MIN;
+
+// Maximum combined value after adjustments
 double COMBINED_MAX;
 
-
+// Variables to hold time values for calculations
 double previousTime;
 double currentTime; 
 double elapsedTime;
 
+// Boolean variable to check if the chainsaw should be running
 bool chainsawRunning;
-int currentState=0;
+
+enum State {
+  NORMAL,
+  RESET,
+  SET,
+  EMERGENCY,
+  STOP
+};
+
+void updateState(State newState) {
+  currentState = newState;
+}
 
 void setup()
  {
@@ -118,69 +156,59 @@ void setup()
   pinMode(RESET_BUTTON, INPUT_PULLUP);
   pinMode(SET_BUTTON, INPUT_PULLUP);
 
-  currentState=4; //default
+  updateState(NORMAL);
   blink();
   chainsawRunning=false;
+}
+
+void checkAndUpdate(float &currentMax, float &currentMin, float finalValue) {
+  if(finalValue > currentMax) {
+    currentMax = finalValue;
+  }
+  if(finalValue < currentMin) {
+    currentMin = finalValue;
+  }
+  COMBINED_MAX = abs(pitch_final) + abs(yaw_final) + 1.5 * abs(roll_final);
+}
+
+void checkValues() {
+  checkAndUpdate(PITCH_MAX, PITCH_MIN, pitch_final);
+  checkAndUpdate(ROLL_MAX, ROLL_MIN, roll_final);
+  checkAndUpdate(YAW_MAX, YAW_MIN, yaw_final);
+}
+
+void checkButtonAndSetState(int button, int state) {
+  if(digitalRead(button) == LOW) {
+    updateState(state);
+  }
+}
+
+void checkValueAndSetEmergency(float value, float min, float max, const char* message) {
+  if(chainsawRunning && (value < min || value > max)) {
+    Serial.println(message);
+    updateState(EMERGENCY);
+  }
 }
 
 void loop()
 {
 
-  if(digitalRead(RESET_BUTTON)==LOW)
-  {
-    currentState=1;
-  }
+  checkButtonAndSetState(RESET_BUTTON, RESET);
+  checkButtonAndSetState(SET_BUTTON, SET);
 
-  if(digitalRead(SET_BUTTON)==LOW)
-  {
-    currentState=2;
-  }
+  checkValueAndSetEmergency(pitch_final, PITCH_MIN, PITCH_MAX, "PITCH_OUT_OF_RANGE");
+  checkValueAndSetEmergency(roll_final, ROLL_MIN, ROLL_MAX, "ROLL_OUT_OF_RANGE");
+  checkValueAndSetEmergency(yaw_final, YAW_MIN, YAW_MAX, "YAW_OUT_OF_RANGE");
 
-  if(chainsawRunning && pitch_final>PITCH_MAX)
-  {
-    Serial.println("PITCH_MAX");
-    currentState=3;
-  }
-
-  if(chainsawRunning && pitch_final<PITCH_MIN)
-  {
-    Serial.println("PITCH_MIN");
-    currentState=3;
-  }
-
-  if(chainsawRunning && roll_final>ROLL_MAX)
-  {
-    Serial.println("ROLL_MAX");
-    currentState=3;
-  }
-
-  if(chainsawRunning && roll_final<ROLL_MIN)
-  {
-    Serial.println("ROLL_MIN");
-    currentState=3;
-  }
-
-  if(chainsawRunning && yaw_final>YAW_MAX)
-  {
-    Serial.println("YAW_MAX");
-    currentState=3;
-  }
-
-  if(chainsawRunning && yaw_final<YAW_MIN)
-  {
-    Serial.println("YAW_MIN");
-    currentState=3;
-  }
-  if (chainsawRunning && combined>COMBINED_MAX)
-  {
+  if(chainsawRunning && combined > COMBINED_MAX) {
     Serial.println("COMBINED_MAX");
-    currentState=3;
+    updateState(EMERGENCY);
   }
 
 
   switch(currentState)
   {
-    case 0:   //normal use
+    case NORMAL:   //normal use
       chainsawRunning=true;
       digitalWrite(WORK_LED, HIGH);
       digitalWrite(BRAKE_LED, LOW);
@@ -189,7 +217,7 @@ void loop()
       printAngles();
       break;
 
-    case 1: //reset Button - reset YAW & goes to normal use
+    case RESET: //reset Button - reset YAW & goes to normal use
     chainsawRunning=false;
       digitalWrite(WORK_LED, LOW);
       digitalWrite(BRAKE_LED, HIGH);
@@ -202,10 +230,10 @@ void loop()
       setMaxValues(PRESET_PITCH_MAX, PRESET_ROLL_MAX,PRESET_YAW_MAX);
       setMinValues(PRESET_PITCH_MIN, PRESET_ROLL_MIN,PRESET_YAW_MIN);
       COMBINED_MAX=PRESET_COMBINED_MAX;
-      currentState=0;
+      updateState(NORMAL);
       break;
 
-    case 2: //Set-Button - defining ZONE
+    case SET: //Set-Button - defining ZONE
       chainsawRunning=false;
       digitalWrite(WORK_LED, LOW);
       digitalWrite(BRAKE_LED, LOW);
@@ -219,128 +247,41 @@ void loop()
 
       setAngles();
 
-      if(pitch_final>PITCH_MAX)
-        {
-          PITCH_MAX=pitch_final;
-          COMBINED_MAX=(abs(pitch_final)+abs(yaw_final)+1.5*abs(roll_final));
-        }
-      if(roll_final>ROLL_MAX)
-        {
-          ROLL_MAX=roll_final;
-  	      COMBINED_MAX=(abs(pitch_final)+abs(yaw_final)+1.5*abs(roll_final));
-        }
+      checkValues();
 
-      if(yaw_final>YAW_MAX)
-        {
-          YAW_MAX=yaw_final;
-          COMBINED_MAX=(abs(pitch_final)+abs(yaw_final)+1.5*abs(roll_final));
-        }
-
-
-      if(pitch_final<PITCH_MIN)
-        {
-          PITCH_MIN=pitch_final;
-          COMBINED_MAX=(abs(pitch_final)+abs(yaw_final)+1.5*abs(roll_final));
-        }
-
-      if(roll_final<ROLL_MIN)
-        {
-          ROLL_MIN=roll_final;
-          COMBINED_MAX=(abs(pitch_final)+abs(yaw_final)+1.5*abs(roll_final));
-        }
-
-      if(yaw_final<YAW_MIN)
-        {
-          YAW_MIN=yaw_final;
-          COMBINED_MAX=(abs(pitch_final)+abs(yaw_final)+1.5*abs(roll_final));
-        }
       printAngles();
 
-      currentState=0;
+      updateState(NORMAL);
       break;
 
-    case 3: //Emergency-STOP
+    case EMERGENCY: //Emergency-STOP
       chainsawRunning=false;
       digitalWrite(WORK_LED, LOW);
       digitalWrite(BRAKE_LED, HIGH);
       digitalWrite(SETTING_LED, LOW);
-      currentState=4;
+      updateState(STOP);
       break;
 
   }
 }
 
-void blink ()
-{
-  digitalWrite(WORK_LED, HIGH);
-  digitalWrite(BRAKE_LED, HIGH);
-  digitalWrite(SETTING_LED, HIGH);
-  delay(200);
-  digitalWrite(WORK_LED, LOW);
-  digitalWrite(BRAKE_LED, LOW);
-  digitalWrite(SETTING_LED, LOW);
-  delay(200);
-  digitalWrite(WORK_LED, HIGH);
-  digitalWrite(BRAKE_LED, HIGH);
-  digitalWrite(SETTING_LED, HIGH);
-  delay(200);
-  digitalWrite(WORK_LED, LOW);
-  digitalWrite(BRAKE_LED, LOW);
-  digitalWrite(SETTING_LED, LOW);
-  delay(200);
+void setLEDs(int state) {
+  digitalWrite(WORK_LED, state);
+  digitalWrite(BRAKE_LED, state);
+  digitalWrite(SETTING_LED, state);
+}
+
+void blink() {
+  for(int i = 0; i < 2; i++) {
+    setLEDs(HIGH);
+    delay(200);
+    setLEDs(LOW);
+    delay(200);
+  }
 }
 
 void setAngles()
 {
-/*
-  int16_t ax, ay, az;
-  int16_t gx, gy, gz;
-    mpu.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
-
-    ax-=-337;
-    ay-=-295;
-    az-=1375.5;
-    gx-=19.5;
-    gy-=-33.5;
-    gz-=4.5;
-
-  // Berechne Beschleunigungsmesser-Winkel (Roll und Pitch)
-    accAngleX=atan2(ay,sqrt(pow(ax,2)+pow(az,2)))*180.0/M_PI;
-    accAngleY=atan2(ax,sqrt(pow(ay,2)+pow(az,2)))*180.0/M_PI;
-    
-  //Time calc
-    previousTime = currentTime;        // Previous time is stored before the actual time read
-    currentTime = millis();            // Current time actual time read
-    elapsedTime = (currentTime - previousTime) / 1000; // Divide by 1000 to get seconds
-
-  // Berechne Gyroskop-Winkel
-    double gyroRateX = (double)gx / 131.0; // 131 LSB/°/s für Gyroskop
-    double gyroRateY = (double)gy / 131.0;
-    double gyroRateZ = (double)gz / 131.0;
-    gyroAngleX += gyroRateX *(double)0.01; // 0.01 Sekunden Probenahmezeit, bzw elapsed Time
-    gyroAngleY += gyroRateY *(double)0.01;
-    gyroAngleZ += gyroRateZ *(double)0.01;
-
-  // Berechne Roll- und Pitch-Winkel durch Kombination von Beschleunigungsmesser- und Gyroskop-Winkeln
-    roll = ALPHA * (roll + gyroRateX *(double)0.01) + (1 - ALPHA) * accAngleX;
-    pitch = (ALPHA * (pitch + gyroRateY *(double)0.01) + (1 - ALPHA) * accAngleY);
-
-    rollZero=-roll+offsetRoll;      //Roll starts at +90deg
-    pitchZero=(-pitch+offsetPitch); //Pitch starts at +90deg
-
-  //Berechnung von YAW
-    yaw+=gyroRateZ*elapsedTime;
-    yawZero=-yaw+offsetYaw;
-
-  //setting new Values
-    pitch_final=pitchZero;
-    roll_final=rollZero;
-    yaw_final=yawZero;
-    
-  //setting combined value
-   // combined=((pow(tan(pitch_final-90),2)/pow(tan(PITCH_MAX-90),2))+pow(tan(yaw_final-90),2)/pow(tan(YAW_MAX-90),2));
-  combined=abs(pitch_final)+abs(yaw_final)+1.5*abs(roll_final);*/
-
 if (mpu.dmpGetCurrentFIFOPacket(fifoBuffer)) // Get the Latest packet 
 { 
 
@@ -367,34 +308,28 @@ if (mpu.dmpGetCurrentFIFOPacket(fifoBuffer)) // Get the Latest packet
 }
 }
 
-void printAngles()
-{
-    Serial.print("Pitch:");
-    Serial.println(pitch_final); Serial.print("\t");
-    Serial.print("Roll:");
-    Serial.print(roll_final); Serial.print("\t");
-    Serial.print("YAW:");
-    Serial.println(yaw_final); Serial.print("\t");
-    Serial.print("COMBINED:");
-    Serial.println(combined); Serial.print("\t");
+void printWithTab(const String& text, float value) {
+  Serial.print(text);
+  Serial.print(value);
+  Serial.print("\t");
+}
 
-//MAX:
-  /*  Serial.print("Pitch_Max:");
-    Serial.println(PITCH_MAX); Serial.print("\t");
-    Serial.print("Roll_MAX:");
-    Serial.print(ROLL_MAX); Serial.print("\t");
-    Serial.print("YAW_Max:");
-    Serial.println(YAW_MAX); Serial.print("\t");
-    Serial.print("Combined_Max:");
-    Serial.println(COMBINED_MAX); Serial.print("\t");
-//MIN:
-    Serial.print("Pitch_Min:");
-    Serial.println(PITCH_MIN); Serial.print("\t");
-    Serial.print("Roll_Min:");
-    Serial.print(ROLL_MIN); Serial.print("\t");
-    Serial.print("YAW_Min:");
-    Serial.println(YAW_MIN); Serial.print("\t");
-    */
+void printAngles() {
+  printWithTab("Pitch:", pitch_final);
+  printWithTab("Roll:", roll_final);
+  printWithTab("YAW:", yaw_final);
+  printWithTab("COMBINED:", combined);
+
+  // Uncomment the following lines if you want to print MAX and MIN values
+  /*
+  printWithTab("Pitch_Max:", PITCH_MAX);
+  printWithTab("Roll_MAX:", ROLL_MAX);
+  printWithTab("YAW_Max:", YAW_MAX);
+  printWithTab("Combined_Max:", COMBINED_MAX);
+  printWithTab("Pitch_Min:", PITCH_MIN);
+  printWithTab("Roll_Min:", ROLL_MIN);
+  printWithTab("YAW_Min:", YAW_MIN);
+  */
 }
 
 void setMaxValues(double pitch_max, double roll_max, double yaw_max)
@@ -405,7 +340,6 @@ void setMaxValues(double pitch_max, double roll_max, double yaw_max)
 
 }
 
-
 void setMinValues(double pitch_min, double roll_min, double yaw_min)
 {
   PITCH_MIN=pitch_min;
@@ -413,7 +347,6 @@ void setMinValues(double pitch_min, double roll_min, double yaw_min)
   YAW_MIN=yaw_min;
 
 }
-
 
 void resetAllValues()
 {
@@ -426,7 +359,7 @@ void resetAllValues()
     mpu.setZGyroOffset(-14);
     mpu.setXAccelOffset(-3699);
     mpu.setYAccelOffset(-2519);
-    mpu.setZAccelOffset(1391); // 1688 factory default for my test chip
+    mpu.setZAccelOffset(1391);
 
     // make sure it worked (returns 0 if so)
     if (devStatus == 0) 
